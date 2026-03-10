@@ -480,128 +480,195 @@ class DataStore:
 db = DataStore()
 
 # ==================== PDF生成工具 ====================
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.colors import red, HexColor
+import streamlit as st
+import time
+
+# ===================== 必须定义的常量（解决CHINESE_FONT未定义问题） =====================
+# 请根据你的实际中文字体路径修改，Streamlit Cloud上可用"SimHei"或"WenQuanYi Zen Hei"
+CHINESE_FONT = "SimHei"  # 中文黑体，适配大多数环境
+
+# ===================== 模拟数据库对象（如果你的db已有定义，可删除此段） =====================
+# 如果你有实际的db模块，请确保导入：from your_db_module import db
+class MockDB:
+    def __init__(self):
+        self.evaluations = []  # 评估记录列表
+        self.factories = []    # 工厂列表
+        self.modules = {}      # 评估模块配置
+    
+    def save_evaluations(self):
+        """模拟保存评估记录到文件/数据库"""
+        # 请替换为你的实际保存逻辑（如写入JSON文件、数据库等）
+        print(f"保存评估记录，当前总数：{len(self.evaluations)}")
+
+# 初始化数据库对象（如果你的代码中已有db，注释掉这行）
+db = MockDB()
+
+# ===================== 核心函数（修复后） =====================
 def generate_pdf(evaluation):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
-    styles = getSampleStyleSheet()
+    """
+    生成评估报告PDF
+    :param evaluation: 评估记录字典
+    :return: BytesIO 二进制PDF流
+    """
+    try:
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        styles = getSampleStyleSheet()
 
-    chinese_styles = {
-        'Heading1': ParagraphStyle(
-            'CustomHeading1', parent=styles['Heading1'], fontName=CHINESE_FONT,
-            fontSize=18, spaceAfter=20, alignment=1
-        ),
-        'Heading2': ParagraphStyle(
-            'CustomHeading2', parent=styles['Heading2'], fontName=CHINESE_FONT,
-            fontSize=14, spaceAfter=12
-        ),
-        'Normal': ParagraphStyle(
-            'CustomNormal', parent=styles['Normal'], fontName=CHINESE_FONT,
-            fontSize=12, spaceAfter=6
-        ),
-        'TotalScore': ParagraphStyle(
-            'CustomTotalScore', parent=styles['Normal'], fontName=CHINESE_FONT,
-            fontSize=16, spaceAfter=12, textColor='red', bold=True
-        ),
-        'KeyProcess': ParagraphStyle(
-            'CustomKeyProcess', parent=styles['Normal'], fontName=CHINESE_FONT,
-            fontSize=12, spaceAfter=6, textColor='#FF8C00'
-        )
-    }
+        # 定义中文字体样式（修复颜色定义错误）
+        chinese_styles = {
+            'Heading1': ParagraphStyle(
+                'CustomHeading1', parent=styles['Heading1'], fontName=CHINESE_FONT,
+                fontSize=18, spaceAfter=20, alignment=1
+            ),
+            'Heading2': ParagraphStyle(
+                'CustomHeading2', parent=styles['Heading2'], fontName=CHINESE_FONT,
+                fontSize=14, spaceAfter=12
+            ),
+            'Normal': ParagraphStyle(
+                'CustomNormal', parent=styles['Normal'], fontName=CHINESE_FONT,
+                fontSize=12, spaceAfter=6
+            ),
+            'TotalScore': ParagraphStyle(
+                'CustomTotalScore', parent=styles['Normal'], fontName=CHINESE_FONT,
+                fontSize=16, spaceAfter=12, textColor=red, bold=True
+            ),
+            'KeyProcess': ParagraphStyle(
+                'CustomKeyProcess', parent=styles['Normal'], fontName=CHINESE_FONT,
+                fontSize=12, spaceAfter=6, textColor=HexColor('#FF8C00')  # 修复颜色定义
+            )
+        }
 
-    elements = []
-    elements.append(Paragraph("工厂流程审核报告", chinese_styles['Heading1']))
-    factory_name = next(f['name'] for f in db.factories if f['id'] == evaluation['factory_id'])
-    elements.extend([
-        Paragraph(f"工厂名称：{factory_name}", chinese_styles['Normal']),
-        Paragraph(f"评估日期：{evaluation['eval_date']}", chinese_styles['Normal']),
-        Paragraph(f"评估人员：{evaluation['evaluator']}", chinese_styles['Normal']),
-        Paragraph(f"审核性质：{evaluation.get('eval_type', '未记录')}", chinese_styles['Normal']), # 新增行
-        Paragraph(f"工厂总分：{evaluation['overall_percent']:.2f}%", chinese_styles['TotalScore']),
-        Spacer(1, 12)
-    ])
+        elements = []
+        elements.append(Paragraph("工厂流程审核报告", chinese_styles['Heading1']))
+        
+        # 安全获取工厂名称（修复StopIteration异常）
+        factory_name = "未知工厂"
+        try:
+            factory_name = next(f['name'] for f in db.factories if f['id'] == evaluation['factory_id'])
+        except StopIteration:
+            print(f"警告：未找到工厂ID为 {evaluation['factory_id']} 的工厂")
 
-    elements.append(Paragraph("一、存在问题汇总", chinese_styles['Heading2']))
-    elements.append(Paragraph("经评估，请该工厂注意以下方面：", chinese_styles['Normal']))
+        # 构建基础信息（增加空值安全处理）
+        elements.extend([
+            Paragraph(f"工厂名称：{factory_name}", chinese_styles['Normal']),
+            Paragraph(f"评估日期：{evaluation.get('eval_date', '未记录')}", chinese_styles['Normal']),
+            Paragraph(f"评估人员：{evaluation.get('evaluator', '未记录')}", chinese_styles['Normal']),
+            Paragraph(f"审核性质：{evaluation.get('eval_type', '未记录')}", chinese_styles['Normal']),
+            # 安全处理总分（避免KeyError/TypeError）
+            Paragraph(f"工厂总分：{evaluation.get('overall_percent', 0):.2f}%", chinese_styles['TotalScore']),
+            Spacer(1, 12)
+        ])
 
-    key_items = []
-    other_items = []
+        # 存在问题汇总
+        elements.append(Paragraph("一、存在问题汇总", chinese_styles['Heading2']))
+        elements.append(Paragraph("经评估，请该工厂注意以下方面：", chinese_styles['Normal']))
 
-    for mod_name in evaluation['selected_modules']:
-            # --- 修改点：增加安全检查 ---
-        if mod_name not in db.modules:
-            # 如果历史记录中的模块名在当前配置里找不到了，跳过此模块或打印日志
-            print(f"Warning: Module {mod_name} not found in current configuration.")
-            continue
-        mod = db.modules[mod_name]
-        for sub_name, sub_mod in mod['sub_modules'].items():
-            for item in sub_mod['items']:
-                res = evaluation['results'].get(item['id'], {})
-                if not res.get('is_checked', False):
-                    item_text = f"【{mod_name}-{sub_name}】{item['name']}"
-                    if res.get('details'):
-                        item_text += f"（问题详情：{', '.join(res['details'])}）"
-                    if item['comment']:
-                        item_text += f" 改进建议：{item['comment']}"
+        key_items = []
+        other_items = []
 
-                    if item.get('is_key', False):
-                        key_items.append(item_text)
-                    else:
-                        other_items.append(item_text)
+        # 遍历评估模块（修复缩进错误+增加安全检查）
+        for mod_name in evaluation.get('selected_modules', []):
+            # 安全检查：模块是否存在
+            if mod_name not in db.modules:
+                print(f"Warning: Module {mod_name} not found in current configuration.")
+                continue
+            
+            mod = db.modules[mod_name]
+            # 安全遍历子模块
+            for sub_name, sub_mod in mod.get('sub_modules', {}).items():
+                # 安全遍历评估项
+                for item in sub_mod.get('items', []):
+                    res = evaluation.get('results', {}).get(item['id'], {})
+                    if not res.get('is_checked', False):
+                        item_text = f"【{mod_name}-{sub_name}】{item.get('name', '未知项')}"
+                        if res.get('details'):
+                            item_text += f"（问题详情：{', '.join(res['details'])}）"
+                        if item.get('comment'):
+                            item_text += f" 改进建议：{item['comment']}"
 
-    if key_items:
-        elements.append(Paragraph("（一）重点工序", chinese_styles['KeyProcess']))
-        for i, text in enumerate(key_items, 1):
-            elements.append(Paragraph(f"{i}. {text}", chinese_styles['KeyProcess']))
+                        if item.get('is_key', False):
+                            key_items.append(item_text)
+                        else:
+                            other_items.append(item_text)
+
+        # 重点工序
+        if key_items:
+            elements.append(Paragraph("（一）重点工序", chinese_styles['KeyProcess']))
+            for i, text in enumerate(key_items, 1):
+                elements.append(Paragraph(f"{i}. {text}", chinese_styles['KeyProcess']))
+                elements.append(Spacer(1, 6))
+        else:
+            elements.append(Paragraph("（一）重点工序：本次评估未发现重点工序问题", chinese_styles['KeyProcess']))
             elements.append(Spacer(1, 6))
-    else:
-        elements.append(Paragraph("（一）重点工序：本次评估未发现重点工序问题", chinese_styles['KeyProcess']))
-        elements.append(Spacer(1, 6))
 
-    if other_items:
-        elements.append(Paragraph("（二）其他工序", chinese_styles['Normal']))
-        for i, text in enumerate(other_items, 1):
-            elements.append(Paragraph(f"{i}. {text}", chinese_styles['Normal']))
+        # 其他工序
+        if other_items:
+            elements.append(Paragraph("（二）其他工序", chinese_styles['Normal']))
+            for i, text in enumerate(other_items, 1):
+                elements.append(Paragraph(f"{i}. {text}", chinese_styles['Normal']))
+                elements.append(Spacer(1, 6))
+        else:
+            elements.append(Paragraph("（二）其他工序：本次评估未发现其他工序问题", chinese_styles['Normal']))
             elements.append(Spacer(1, 6))
-    else:
-        elements.append(Paragraph("（二）其他工序：本次评估未发现其他工序问题", chinese_styles['Normal']))
-        elements.append(Spacer(1, 6))
 
-    elements.append(Paragraph("二、评估者评论", chinese_styles['Heading2']))
-    if evaluation['comments']:
-        elements.append(Paragraph(evaluation['comments'], chinese_styles['Normal']))
-    else:
-        elements.append(Paragraph("无评论", chinese_styles['Normal']))
+        # 评估者评论
+        elements.append(Paragraph("二、评估者评论", chinese_styles['Heading2']))
+        if evaluation.get('comments'):
+            elements.append(Paragraph(evaluation['comments'], chinese_styles['Normal']))
+        else:
+            elements.append(Paragraph("无评论", chinese_styles['Normal']))
 
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
+        # 生成PDF
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+    
+    except Exception as e:
+        st.error(f"生成PDF失败：{str(e)}")
+        print(f"PDF生成错误详情：{e}")
+        return None
 
 def handle_edit_logic(record, index):
     """
     点击编辑按钮后调用的逻辑
+    :param record: 要编辑的评估记录
+    :param index: 记录在列表中的索引
     """
-    # 将记录存入 session 状态，供评估表单读取
-    st.session_state.editing_record = record
-    st.session_state.editing_index = index
-    st.session_state.is_edit_mode = True
-    
-    # 强制切换回“开始评估”页面
-    # 注意：这里的字符串要和你 sidebar.radio 里的“开始评估”选项完全一致
-    st.session_state.menu_choice = "🏠 开始评估" 
-    st.rerun()
+    try:
+        # 将记录存入 session 状态，供评估表单读取
+        st.session_state.editing_record = record
+        st.session_state.editing_index = index
+        st.session_state.is_edit_mode = True
+        
+        # 强制切换回“开始评估”页面
+        st.session_state.menu_choice = "🏠 开始评估" 
+        st.rerun()
+    except Exception as e:
+        st.error(f"进入编辑模式失败：{str(e)}")
 
 def get_default_val(key, default=False):
     """
     安全获取回填值：如果是编辑模式，取历史值；否则取默认值
+    :param key: 评估项ID
+    :param default: 默认值
+    :return: 回填值/默认值
     """
-    if st.session_state.get("is_edit_mode") and st.session_state.get("editing_record"):
-        return st.session_state.editing_record.get("results", {}).get(key, default)
-    return default
+    try:
+        if st.session_state.get("is_edit_mode") and st.session_state.get("editing_record"):
+            return st.session_state.editing_record.get("results", {}).get(key, default)
+        return default
+    except Exception as e:
+        print(f"获取默认值失败：{e}")
+        return default
 
 def inject_print_css():
-    """
-    注入打印优化样式
-    """
+    """注入打印优化样式"""
     st.markdown("""
         <style>
         @media print {
@@ -630,41 +697,231 @@ def inject_print_css():
 def save_evaluation_logic(new_record):
     """
     核心保存逻辑：区分『新增』与『覆盖』
+    :param new_record: 新的/编辑后的评估记录
     """
-    # 获取当前所有评估记录
-    all_evals = db.evaluations 
-    
-    if st.session_state.get("is_edit_mode"):
-        # --- 覆盖模式 ---
-        edit_idx = st.session_state.get("editing_index")
+    try:
+        # 获取当前所有评估记录
+        all_evals = db.evaluations 
         
-        # 安全检查：确保索引有效
-        if edit_idx is not None and 0 <= edit_idx < len(all_evals):
-            # 1. 替换旧记录
-            all_evals[edit_idx] = new_record
+        if st.session_state.get("is_edit_mode"):
+            # --- 覆盖模式 ---
+            edit_idx = st.session_state.get("editing_index")
             
-            # 2. 持久化到 JSON 或 服务器
-            db.save_evaluations() 
-            
-            st.success(f"✅ 报告已成功更新！(记录索引: {edit_idx})")
-            
-            # 3. 退出编辑模式并重置状态
-            st.session_state.is_edit_mode = False
-            st.session_state.editing_record = None
-            st.session_state.editing_index = None
-            
-            # 4. 延迟刷新，让用户看清成功提示
-            import time
-            time.sleep(1)
-            st.rerun()
+            # 安全检查：确保索引有效
+            if edit_idx is not None and 0 <= edit_idx < len(all_evals):
+                # 1. 替换旧记录
+                all_evals[edit_idx] = new_record
+                
+                # 2. 持久化到 JSON 或 服务器
+                db.save_evaluations() 
+                
+                st.success(f"✅ 报告已成功更新！(记录索引: {edit_idx})")
+                
+                # 3. 退出编辑模式并重置状态
+                st.session_state.is_edit_mode = False
+                st.session_state.editing_record = None
+                st.session_state.editing_index = None
+                
+                # 4. 延迟刷新，让用户看清成功提示
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("❌ 编辑失败：找不到原始记录索引。")
         else:
-            st.error("❌ 编辑失败：找不到原始记录索引。")
-    else:
-        # --- 正常新增模式 ---
-        all_evals.append(new_record)
-        db.save_evaluations()
-        st.success("✅ 新评估报告已保存！")
-        st.rerun()
+            # --- 正常新增模式 ---
+            all_evals.append(new_record)
+            db.save_evaluations()
+            st.success("✅ 新评估报告已保存！")
+            st.rerun()
+    except Exception as e:
+        st.error(f"保存评估记录失败：{str(e)}")
+        print(f"保存逻辑错误详情：{e}")
+        
+# def generate_pdf(evaluation):
+#     buffer = BytesIO()
+#     doc = SimpleDocTemplate(buffer, pagesize=A4)
+#     styles = getSampleStyleSheet()
+
+#     chinese_styles = {
+#         'Heading1': ParagraphStyle(
+#             'CustomHeading1', parent=styles['Heading1'], fontName=CHINESE_FONT,
+#             fontSize=18, spaceAfter=20, alignment=1
+#         ),
+#         'Heading2': ParagraphStyle(
+#             'CustomHeading2', parent=styles['Heading2'], fontName=CHINESE_FONT,
+#             fontSize=14, spaceAfter=12
+#         ),
+#         'Normal': ParagraphStyle(
+#             'CustomNormal', parent=styles['Normal'], fontName=CHINESE_FONT,
+#             fontSize=12, spaceAfter=6
+#         ),
+#         'TotalScore': ParagraphStyle(
+#             'CustomTotalScore', parent=styles['Normal'], fontName=CHINESE_FONT,
+#             fontSize=16, spaceAfter=12, textColor='red', bold=True
+#         ),
+#         'KeyProcess': ParagraphStyle(
+#             'CustomKeyProcess', parent=styles['Normal'], fontName=CHINESE_FONT,
+#             fontSize=12, spaceAfter=6, textColor='#FF8C00'
+#         )
+#     }
+
+#     elements = []
+#     elements.append(Paragraph("工厂流程审核报告", chinese_styles['Heading1']))
+#     factory_name = next(f['name'] for f in db.factories if f['id'] == evaluation['factory_id'])
+#     elements.extend([
+#         Paragraph(f"工厂名称：{factory_name}", chinese_styles['Normal']),
+#         Paragraph(f"评估日期：{evaluation['eval_date']}", chinese_styles['Normal']),
+#         Paragraph(f"评估人员：{evaluation['evaluator']}", chinese_styles['Normal']),
+#         Paragraph(f"审核性质：{evaluation.get('eval_type', '未记录')}", chinese_styles['Normal']), # 新增行
+#         Paragraph(f"工厂总分：{evaluation['overall_percent']:.2f}%", chinese_styles['TotalScore']),
+#         Spacer(1, 12)
+#     ])
+
+#     elements.append(Paragraph("一、存在问题汇总", chinese_styles['Heading2']))
+#     elements.append(Paragraph("经评估，请该工厂注意以下方面：", chinese_styles['Normal']))
+
+#     key_items = []
+#     other_items = []
+
+#     for mod_name in evaluation['selected_modules']:
+#             # --- 修改点：增加安全检查 ---
+#         if mod_name not in db.modules:
+#             # 如果历史记录中的模块名在当前配置里找不到了，跳过此模块或打印日志
+#             print(f"Warning: Module {mod_name} not found in current configuration.")
+#             continue
+#         mod = db.modules[mod_name]
+#         for sub_name, sub_mod in mod['sub_modules'].items():
+#             for item in sub_mod['items']:
+#                 res = evaluation['results'].get(item['id'], {})
+#                 if not res.get('is_checked', False):
+#                     item_text = f"【{mod_name}-{sub_name}】{item['name']}"
+#                     if res.get('details'):
+#                         item_text += f"（问题详情：{', '.join(res['details'])}）"
+#                     if item['comment']:
+#                         item_text += f" 改进建议：{item['comment']}"
+
+#                     if item.get('is_key', False):
+#                         key_items.append(item_text)
+#                     else:
+#                         other_items.append(item_text)
+
+#     if key_items:
+#         elements.append(Paragraph("（一）重点工序", chinese_styles['KeyProcess']))
+#         for i, text in enumerate(key_items, 1):
+#             elements.append(Paragraph(f"{i}. {text}", chinese_styles['KeyProcess']))
+#             elements.append(Spacer(1, 6))
+#     else:
+#         elements.append(Paragraph("（一）重点工序：本次评估未发现重点工序问题", chinese_styles['KeyProcess']))
+#         elements.append(Spacer(1, 6))
+
+#     if other_items:
+#         elements.append(Paragraph("（二）其他工序", chinese_styles['Normal']))
+#         for i, text in enumerate(other_items, 1):
+#             elements.append(Paragraph(f"{i}. {text}", chinese_styles['Normal']))
+#             elements.append(Spacer(1, 6))
+#     else:
+#         elements.append(Paragraph("（二）其他工序：本次评估未发现其他工序问题", chinese_styles['Normal']))
+#         elements.append(Spacer(1, 6))
+
+#     elements.append(Paragraph("二、评估者评论", chinese_styles['Heading2']))
+#     if evaluation['comments']:
+#         elements.append(Paragraph(evaluation['comments'], chinese_styles['Normal']))
+#     else:
+#         elements.append(Paragraph("无评论", chinese_styles['Normal']))
+
+#     doc.build(elements)
+#     buffer.seek(0)
+#     return buffer
+
+# def handle_edit_logic(record, index):
+#     """
+#     点击编辑按钮后调用的逻辑
+#     """
+#     # 将记录存入 session 状态，供评估表单读取
+#     st.session_state.editing_record = record
+#     st.session_state.editing_index = index
+#     st.session_state.is_edit_mode = True
+    
+#     # 强制切换回“开始评估”页面
+#     # 注意：这里的字符串要和你 sidebar.radio 里的“开始评估”选项完全一致
+#     st.session_state.menu_choice = "🏠 开始评估" 
+#     st.rerun()
+
+# def get_default_val(key, default=False):
+#     """
+#     安全获取回填值：如果是编辑模式，取历史值；否则取默认值
+#     """
+#     if st.session_state.get("is_edit_mode") and st.session_state.get("editing_record"):
+#         return st.session_state.editing_record.get("results", {}).get(key, default)
+#     return default
+
+# def inject_print_css():
+#     """
+#     注入打印优化样式
+#     """
+#     st.markdown("""
+#         <style>
+#         @media print {
+#             /* 隐藏侧边栏、顶部导航、按钮、工具栏 */
+#             [data-testid="stSidebar"], 
+#             header, 
+#             footer, 
+#             .stButton, 
+#             [data-testid="stToolbar"],
+#             .stTabs {
+#                 display: none !important;
+#             }
+#             /* 扩展正文宽度到整张纸 */
+#             .main .block-container {
+#                 max-width: 100% !important;
+#                 padding: 1cm !important;
+#             }
+#             /* 强制显示复选框的边框（部分浏览器默认不打印背景） */
+#             input[type="checkbox"] {
+#                 -webkit-print-color-adjust: exact;
+#             }
+#         }
+#         </style>
+#     """, unsafe_allow_html=True)
+
+# def save_evaluation_logic(new_record):
+#     """
+#     核心保存逻辑：区分『新增』与『覆盖』
+#     """
+#     # 获取当前所有评估记录
+#     all_evals = db.evaluations 
+    
+#     if st.session_state.get("is_edit_mode"):
+#         # --- 覆盖模式 ---
+#         edit_idx = st.session_state.get("editing_index")
+        
+#         # 安全检查：确保索引有效
+#         if edit_idx is not None and 0 <= edit_idx < len(all_evals):
+#             # 1. 替换旧记录
+#             all_evals[edit_idx] = new_record
+            
+#             # 2. 持久化到 JSON 或 服务器
+#             db.save_evaluations() 
+            
+#             st.success(f"✅ 报告已成功更新！(记录索引: {edit_idx})")
+            
+#             # 3. 退出编辑模式并重置状态
+#             st.session_state.is_edit_mode = False
+#             st.session_state.editing_record = None
+#             st.session_state.editing_index = None
+            
+#             # 4. 延迟刷新，让用户看清成功提示
+#             import time
+#             time.sleep(1)
+#             st.rerun()
+#         else:
+#             st.error("❌ 编辑失败：找不到原始记录索引。")
+#     else:
+#         # --- 正常新增模式 ---
+#         all_evals.append(new_record)
+#         db.save_evaluations()
+#         st.success("✅ 新评估报告已保存！")
+#         st.rerun()
 
 # ==================== 页面路由 ====================
 def main():
