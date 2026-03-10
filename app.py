@@ -479,35 +479,6 @@ class DataStore:
 # ==================== 初始化 ====================
 db = DataStore()
 
-# ==================== PDF生成工具 ====================
-from io import BytesIO
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.colors import red, HexColor
-import streamlit as st
-import time
-
-# ===================== 必须定义的常量（解决CHINESE_FONT未定义问题） =====================
-# 请根据你的实际中文字体路径修改，Streamlit Cloud上可用"SimHei"或"WenQuanYi Zen Hei"
-CHINESE_FONT = "SimHei"  # 中文黑体，适配大多数环境
-
-# ===================== 模拟数据库对象（如果你的db已有定义，可删除此段） =====================
-# 如果你有实际的db模块，请确保导入：from your_db_module import db
-class MockDB:
-    def __init__(self):
-        self.evaluations = []  # 评估记录列表
-        self.factories = []    # 工厂列表
-        self.modules = {}      # 评估模块配置
-    
-    def save_evaluations(self):
-        """模拟保存评估记录到文件/数据库"""
-        # 请替换为你的实际保存逻辑（如写入JSON文件、数据库等）
-        print(f"保存评估记录，当前总数：{len(self.evaluations)}")
-
-# 初始化数据库对象（如果你的代码中已有db，注释掉这行）
-db = MockDB()
-
 # ===================== 核心函数（修复后） =====================
 def generate_pdf(evaluation):
     """
