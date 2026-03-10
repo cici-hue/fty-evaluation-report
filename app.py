@@ -844,7 +844,7 @@ def start_evaluation(current_user_id):
                     last_sub_info = f" (上次: {last_sub_percent:.1f}%)"
 
                 sub_key = f"exp_{factory_id}_{mod_name}_{sub_name}"
-                with st.expander(f"🔹 {sub_name}", expanded=auto_expand, key=sub_key):
+                with st.expander(f"🔹 {sub_name}", expanded=True, key=sub_key):
                     st.write(f"**子项得分: :green[{sub_score_percent:.1f}%]** {last_sub_info}")
                     st.write("") 
 
