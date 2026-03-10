@@ -450,7 +450,7 @@ class DataStore:
         f = os.path.join(DATA_DIR, "evaluations.json")
         return json.load(open(f, 'r', encoding='utf-8')) if os.path.exists(f) else []
 
-    def save_evaluation(self, ev, index=None):
+    def save_evaluations(self, ev, index=None):
     # """
     # 如果提供了 index，则覆盖旧记录（编辑模式）；
     # 否则追加新记录（新增模式）。
