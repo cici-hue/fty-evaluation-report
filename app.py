@@ -1658,27 +1658,32 @@ def show_admin_panel():
     #             st.rerun()
 
 # ==================== 历史记录 ====================
-def show_history_records(current_user, user_role):
-    """展示历史评估记录 + 编辑功能（修复后）"""
-    st.subheader("📜 历史记录")
+def show_history(filtered_evals):
+    """展示历史评估记录 + 编辑功能（适配你的filtered_evals参数）"""
+    st.subheader("📜 历史评估记录")
     
-    # 1. 获取当前用户有权限查看的记录
-    evaluations = db.get_evaluations_by_user(current_user, user_role)
-    if not evaluations:
+    if not filtered_evals:
         st.info("暂无历史评估记录")
         return
     
-    # 2. 按评估日期倒序排列（最新的在最前面）
+    # 按评估日期倒序排列
     evaluations_sorted = sorted(
-        evaluations,
+        filtered_evals,
         key=lambda x: x.get('eval_date', ''),
         reverse=True
     )
     
-    # 3. 遍历展示每条记录 + 编辑按钮
+    # 遍历展示每条记录 + 编辑按钮
     for idx, record in enumerate(evaluations_sorted):
-        # 构建记录展示的卡片
-        with st.expander(f"📅 {record.get('eval_date', '未知日期')} | 🏭 {next(f['name'] for f in db.factories if f['id'] == record.get('factory_id'))} | 📊 {record.get('overall_percent', 0):.2f}%", expanded=False):
+        # 构建记录展示卡片
+        factory_name = "未知工厂"
+        # 匹配工厂名称
+        for f in db.factories:
+            if f['id'] == record.get('factory_id'):
+                factory_name = f['name']
+                break
+        
+        with st.expander(f"📅 {record.get('eval_date', '未知日期')} | 🏭 {factory_name} | 📊 {record.get('overall_percent', 0):.2f}%", expanded=False):
             col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
             with col1:
                 st.write(f"**评估员**: {record.get('evaluator', '未知')}")
@@ -1689,21 +1694,22 @@ def show_history_records(current_user, user_role):
             with col4:
                 st.write(f"**记录ID**: #{record.get('id', idx+1)}")
             
-            # 关键：编辑按钮逻辑（修复核心）
+            # 编辑按钮核心逻辑（点击后设置状态并触发重渲染）
             if st.button(
                 "✏️ 编辑",
                 key=f"edit_btn_{record.get('id', idx)}",  # 唯一key，避免按钮冲突
                 type="secondary"
             ):
-                # 2.1 设置编辑模式核心状态（必须）
+                # 1. 设置编辑模式核心状态
                 st.session_state.is_edit_mode = True
                 st.session_state.editing_record = record  # 保存要编辑的完整记录
                 st.session_state.editing_index = idx      # 保存记录索引（用于后续更新）
-                
-                # 2.2 初始化评估结果状态（确保编辑时能回填复选框）
-                st.session_state.eval_results = record.get('results', {})
-                
-                # 2.3 强制页面重渲染（关键：没有这个，状态更新后界面不变化）
+                # 2. 初始化评估结果状态（确保复选框回填）
+                if 'results' in record:
+                    st.session_state.eval_results = record['results']
+                else:
+                    st.session_state.eval_results = {}
+                # 3. 强制页面重渲染（关键：没有这个按钮点击无反应）
                 st.rerun()
 # def show_history(evals_to_show):
 #     st.subheader("历史记录")
