@@ -450,10 +450,10 @@ class DataStore:
         return json.load(open(f, 'r', encoding='utf-8')) if os.path.exists(f) else []
 
     def save_evaluation(self, ev, index=None):
-    """
-    如果提供了 index，则覆盖旧记录（编辑模式）；
-    否则追加新记录（新增模式）。
-    """
+    # """
+    # 如果提供了 index，则覆盖旧记录（编辑模式）；
+    # 否则追加新记录（新增模式）。
+    # """
     if index is not None and 0 <= index < len(self.evaluations):
         # 编辑模式：保持原有的 ID 和创建时间
         ev['id'] = self.evaluations[index]['id']
