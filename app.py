@@ -1658,42 +1658,102 @@ def show_admin_panel():
     #             st.rerun()
 
 # ==================== 历史记录 ====================
-def show_history(evals_to_show):
-    st.subheader("历史记录")
-    if not evals_to_show:
-        st.info("暂无记录")
+def show_history_records(current_user, user_role):
+    """展示历史评估记录 + 编辑功能（修复后）"""
+    st.subheader("📜 历史记录")
+    
+    # 1. 获取当前用户有权限查看的记录
+    evaluations = db.get_evaluations_by_user(current_user, user_role)
+    if not evaluations:
+        st.info("暂无历史评估记录")
         return
-        
-    # 倒序显示（最近的在前）
-    for i, ev in enumerate(reversed(evals_to_show)):
-        factory_name = next((f['name'] for f in db.factories if f['id'] == ev['factory_id']), "未知")
-        
-        with st.expander(f"📅 {ev['eval_date']} | {factory_name} | {ev['eval_type']}"):
-            c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
-            with c1: st.write(f"评估人：{ev['evaluator']}")
-            with c2: st.write(f"得分：{ev['overall_percent']:.2f}%")
-            with c3:
-                pdf_buf = generate_pdf(ev)
-                st.download_button("📥 下载", pdf_buf, f"报告_{ev['id']}.pdf", key=f"dl_{ev['id']}")
-            with c4:
-                # --- 【修复点2】添加编辑按钮逻辑 ---
-                if st.button("📝 编辑", key=f"edit_{ev['id']}"):
-                    # 找到该记录在原始 db.evaluations 列表中的索引，用于后续覆盖保存
-                    real_idx = -1
-                    for idx, item in enumerate(db.evaluations):
-                        if item['id'] == ev['id']:
-                            real_idx = idx
-                            break
-                    
-                    # 存入 session_state 并触发刷新
-                    st.session_state.editing_record = ev
-                    st.session_state.editing_idx = real_idx
-                    st.session_state.is_edit_mode = True
-                    st.rerun()
+    
+    # 2. 按评估日期倒序排列（最新的在最前面）
+    evaluations_sorted = sorted(
+        evaluations,
+        key=lambda x: x.get('eval_date', ''),
+        reverse=True
+    )
+    
+    # 3. 遍历展示每条记录 + 编辑按钮
+    for idx, record in enumerate(evaluations_sorted):
+        # 构建记录展示的卡片
+        with st.expander(f"📅 {record.get('eval_date', '未知日期')} | 🏭 {next(f['name'] for f in db.factories if f['id'] == record.get('factory_id'))} | 📊 {record.get('overall_percent', 0):.2f}%", expanded=False):
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            with col1:
+                st.write(f"**评估员**: {record.get('evaluator', '未知')}")
+            with col2:
+                st.write(f"**审核类型**: {record.get('eval_type', '常规审核')}")
+            with col3:
+                st.write(f"**总分率**: {record.get('overall_percent', 0):.2f}%")
+            with col4:
+                st.write(f"**记录ID**: #{record.get('id', idx+1)}")
             
-            st.write(f"评论：{ev['comments']}")
+            # 关键：编辑按钮逻辑（修复核心）
+            if st.button(
+                "✏️ 编辑",
+                key=f"edit_btn_{record.get('id', idx)}",  # 唯一key，避免按钮冲突
+                type="secondary"
+            ):
+                # 2.1 设置编辑模式核心状态（必须）
+                st.session_state.is_edit_mode = True
+                st.session_state.editing_record = record  # 保存要编辑的完整记录
+                st.session_state.editing_index = idx      # 保存记录索引（用于后续更新）
+                
+                # 2.2 初始化评估结果状态（确保编辑时能回填复选框）
+                st.session_state.eval_results = record.get('results', {})
+                
+                # 2.3 强制页面重渲染（关键：没有这个，状态更新后界面不变化）
+                st.rerun()
+# def show_history(evals_to_show):
+#     st.subheader("历史记录")
+#     if not evals_to_show:
+#         st.info("暂无记录")
+#         return
+        
+#     # 倒序显示（最近的在前）
+#     for i, ev in enumerate(reversed(evals_to_show)):
+#         factory_name = next((f['name'] for f in db.factories if f['id'] == ev['factory_id']), "未知")
+        
+#         with st.expander(f"📅 {ev['eval_date']} | {factory_name} | {ev['eval_type']}"):
+#             c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+#             with c1: st.write(f"评估人：{ev['evaluator']}")
+#             with c2: st.write(f"得分：{ev['overall_percent']:.2f}%")
+#             with c3:
+#                 pdf_buf = generate_pdf(ev)
+#                 st.download_button("📥 下载", pdf_buf, f"报告_{ev['id']}.pdf", key=f"dl_{ev['id']}")
+#             with c4:
+#                 # --- 【修复点2】添加编辑按钮逻辑 ---
+#                 if st.button("📝 编辑", key=f"edit_{ev['id']}"):
+#                     # 找到该记录在原始 db.evaluations 列表中的索引，用于后续覆盖保存
+#                     real_idx = -1
+#                     for idx, item in enumerate(db.evaluations):
+#                         if item['id'] == ev['id']:
+#                             real_idx = idx
+#                             break
+                    
+#                     # 存入 session_state 并触发刷新
+#                     st.session_state.editing_record = ev
+#                     st.session_state.editing_idx = real_idx
+#                     st.session_state.is_edit_mode = True
+#                     st.rerun()
+            
+#             st.write(f"评论：{ev['comments']}")
 
 def main():
+    # ========== 新增：初始化编辑模式相关状态（防止KeyError） ==========
+    # 必须在login()前初始化，避免首次点击编辑按钮报错
+    if "is_edit_mode" not in st.session_state:
+        st.session_state.is_edit_mode = False
+    if "editing_record" not in st.session_state:
+        st.session_state.editing_record = None
+    if "editing_index" not in st.session_state:
+        st.session_state.editing_index = None
+    if "eval_results" not in st.session_state:
+        st.session_state.eval_results = {}
+    if "last_menu_choice" not in st.session_state:
+        st.session_state.last_menu_choice = "🏠 开始评估"
+    
     # 1. 登录拦截
     login() 
     
@@ -1746,6 +1806,7 @@ def main():
         
     elif "历史记录" in choice:
         st.session_state.is_edit_mode = False
+        # ========== 核心：调用历史记录模块（已定义的show_history函数） ==========
         show_history(filtered_evals)
         
     elif "系统管理" in choice:
@@ -1760,3 +1821,71 @@ def main():
 # 在程序最后运行 main
 if __name__ == "__main__":
     main()
+
+# def main():
+#     # 1. 登录拦截
+#     login() 
+    
+#     # 2. 侧边栏用户信息
+#     st.sidebar.title(f"👤 {st.session_state.user_name}")
+#     st.sidebar.caption(f"权限: {st.session_state.role.upper()}")
+#     st.sidebar.divider()
+    
+#     # 3. 菜单定义
+#     menu_options = ["🏠 开始评估", "📊 数据分析", "📜 历史记录"]
+#     if st.session_state.role == "sadmin":
+#         menu_options.append("⚙️ 系统管理")
+    
+#     # --- 【修复点1】动态确定当前页面索引 ---
+#     # 如果处于编辑模式，强制 index 指向“🏠 开始评估” (即 0)
+#     if st.session_state.get("is_edit_mode"):
+#         default_index = 0
+#     else:
+#         # 否则尝试恢复之前的选择，如果没有则默认为 0
+#         current_choice = st.session_state.get("last_menu_choice", "🏠 开始评估")
+#         try:
+#             default_index = menu_options.index(current_choice)
+#         except ValueError:
+#             default_index = 0
+
+#     # 4. 侧边栏菜单渲染
+#     choice = st.sidebar.radio(
+#         "功能导航", 
+#         options=menu_options,
+#         index=default_index,
+#         key="nav_radio"
+#     )
+    
+#     # 记录当前选择，用于下次刷新时保持页面
+#     st.session_state.last_menu_choice = choice
+
+#     st.sidebar.divider()
+
+#     # 5. 获取数据
+#     filtered_evals = db.get_evaluations_by_user(st.session_state.user_id, st.session_state.role)
+
+#     # 6. 路由分发
+#     if "开始评估" in choice:
+#         # 传递用户ID，start_evaluation 内部需处理 st.session_state.editing_record
+#         start_evaluation(st.session_state.user_id) 
+        
+#     elif "数据分析" in choice:
+#         st.session_state.is_edit_mode = False # 切换页面自动退出编辑态
+#         show_data_analysis(filtered_evals)
+        
+#     elif "历史记录" in choice:
+#         st.session_state.is_edit_mode = False
+#         show_history(filtered_evals)
+        
+#     elif "系统管理" in choice:
+#         st.session_state.is_edit_mode = False
+#         show_admin_panel() 
+
+#     # 7. 退出登录
+#     if st.sidebar.button("🚪 退出登录", use_container_width=True):
+#         st.session_state.clear()
+#         st.rerun()
+
+# # 在程序最后运行 main
+# if __name__ == "__main__":
+#     main()
