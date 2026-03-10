@@ -927,15 +927,14 @@ def main():
         show_data_analysis()
 
 # ==================== 核心评估页面（一键全选/清空 修复版） ====================
-# ==================== 核心评估页面（优化版：拍照/缩略图/大图） ====================
 def start_evaluation(current_user_id):
     inject_custom_css()
-    inject_print_css()  # <--- 【添加位置 1】
+    inject_print_css()
     st.subheader("欢迎回来，评估员")
     
-    # 【新增：编辑模式提醒】
+    # 编辑模式提醒
     if st.session_state.get("is_edit_mode"):
-        st.warning(f"🔄 正在编辑历史记录：{st.session_state.editing_record.get('eval_date')}")
+        st.warning(f"🔄 正在编辑历史记录：{st.session_state.editing_record.get('eval_date', '未知日期')}")
         if st.button("取消编辑"):
             st.session_state.is_edit_mode = False
             st.session_state.editing_record = None
@@ -944,37 +943,37 @@ def start_evaluation(current_user_id):
     # 定义系统固定总分分母
     SYSTEM_TOTAL_FIXED = 177
 
-   # --- 1. 基础配置 ---
+    # --- 1. 基础配置 ---
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         # 回填工厂 ID
-        default_fty = get_default_val("factory_id", db.factories[0]['id'])
+        default_fty = get_default_val("factory_id", db.factories[0]['id'] if db.factories else "")
         # 找到对应 ID 在列表中的索引
-        fty_options = [(f['id'], f['name']) for f in db.factories]
+        fty_options = [(f['id'], f['name']) for f in db.factories] if db.factories else []
         fty_index = next((i for i, f in enumerate(fty_options) if f[0] == default_fty), 0)
-        factory_id = st.selectbox("评估工厂", fty_options, index=fty_index, format_func=lambda x: x[1])[0]
+        factory_id = st.selectbox("评估工厂", fty_options, index=fty_index, format_func=lambda x: x[1], key="factory_sel")[0] if fty_options else ""
     with col2:
         # 回填日期
         default_date = get_default_val("eval_date", date.today())
         if isinstance(default_date, str): # 如果从 JSON 读取的是字符串则转换
              default_date = datetime.strptime(default_date, "%Y-%m-%d").date()
-        eval_date = st.date_input("评估日期", default_date)
+        eval_date = st.date_input("评估日期", default_date, key="date_sel")
     with col3:
-        evaluator = st.text_input("评估员", value=st.session_state.get('user', ''))
+        evaluator = st.text_input("评估员", value=st.session_state.get('user', ''), key="evaluator_sel")
     with col4:
-        eval_type = st.selectbox("审核性质", ["常规审核", "整改复查"])
+        eval_type = st.selectbox("审核性质", ["常规审核", "整改复查"], key="eval_type_sel")
 
-    # 【新增功能：整改复查对比逻辑】
+    # 整改复查对比逻辑
     last_ev = None
-    if eval_type == "整改复查":
-        past_evals = [e for e in db.evaluations if e['factory_id'] == factory_id]
+    if eval_type == "整改复查" and factory_id:
+        past_evals = [e for e in db.evaluations if e.get('factory_id') == factory_id] if hasattr(db, 'evaluations') else []
         if past_evals:
-            last_ev = sorted(past_evals, key=lambda x: x['eval_date'], reverse=True)[0]
+            last_ev = sorted(past_evals, key=lambda x: x.get('eval_date', ''), reverse=True)[0]
         else:
             st.info("该工厂暂无历史评估记录，将以常规模式进行。")
 
-    all_modules = list(db.modules.keys())
-    selected_modules = all_modules if eval_type == "常规审核" else st.multiselect("选择复查模块", all_modules)
+    all_modules = list(db.modules.keys()) if hasattr(db, 'modules') else []
+    selected_modules = all_modules if eval_type == "常规审核" else st.multiselect("选择复查模块", all_modules, key="modules_sel")
     
     if not selected_modules:
         st.info("请选择上方模块开始评分")
@@ -987,18 +986,18 @@ def start_evaluation(current_user_id):
     # 修复点：定义 all_item_ids 用于全选功能
     all_item_ids = []
     for mod_name in selected_modules:
-        for sub_mod in db.modules[mod_name]['sub_modules'].values():
-            for it in sub_mod['items']:
+        mod_data = db.modules.get(mod_name, {})
+        for sub_mod in mod_data.get('sub_modules', {}).values():
+            for it in sub_mod.get('items', []):
                 it_id = it['id']
                 all_item_ids.append(it_id) # 收集所有 ID
                 if it_id not in st.session_state.eval_results:
                     st.session_state.eval_results[it_id] = {"is_checked": False, "details": [], "image_path": None}
 
-   # --- 3. 核心评分循环（及右上角操作按钮） ---
+    # --- 3. 核心评分循环（及右上角操作按钮） ---
     st.divider()
 
     # 使用容器布局，将按钮精准定位在分割线下方、列表右上角
-    # col_space 占比 8.5，确保按钮被推到最右
     col_space, col_btns = st.columns([8.5, 1.5])
     
     with col_btns:
@@ -1034,41 +1033,40 @@ def start_evaluation(current_user_id):
                 st.rerun()
 
     total_system_earned = 0
-    # ... 后面接原来的 for mod_name in selected_modules: ...
-
+    # 核心评分循环
     for mod_name in selected_modules:
-        mod_data = db.modules[mod_name]
+        mod_data = db.modules.get(mod_name, {})
         
         # 计算该模块实时总分
         mod_earned = 0
-        for sub in mod_data['sub_modules'].values():
-            mod_earned += sum(it['score'] for it in sub['items'] if st.session_state.get(f"chk_{it['id']}", False))
+        for sub in mod_data.get('sub_modules', {}).values():
+            mod_earned += sum(it.get('score', 0) for it in sub.get('items', []) if st.session_state.get(f"chk_{it['id']}", False))
         
         # 换算百分比 (基于177)
-        mod_score_percent = (mod_earned / SYSTEM_TOTAL_FIXED * 100)
+        mod_score_percent = (mod_earned / SYSTEM_TOTAL_FIXED * 100) if SYSTEM_TOTAL_FIXED != 0 else 0
         total_system_earned += mod_earned
 
-        # 【计算上一次模块得分】
+        # 计算上一次模块得分
         last_mod_info = ""
         if last_ev:
             last_mod_earned = 0
-            for s_name, s_data in mod_data['sub_modules'].items():
-                last_mod_earned += sum(it['score'] for it in s_data['items'] if last_ev['results'].get(it['id'], {}).get('is_checked', False))
-            last_mod_percent = (last_mod_earned / SYSTEM_TOTAL_FIXED * 100)
+            for s_name, s_data in mod_data.get('sub_modules', {}).items():
+                last_mod_earned += sum(it.get('score', 0) for it in s_data.get('items', []) if last_ev.get('results', {}).get(it['id'], {}).get('is_checked', False))
+            last_mod_percent = (last_mod_earned / SYSTEM_TOTAL_FIXED * 100) if SYSTEM_TOTAL_FIXED != 0 else 0
             last_mod_info = f" (上次: {last_mod_percent:.1f}%)"
 
         with st.expander(f"📦{mod_name}", expanded=True):
             st.write(f"**模块得分: :blue[{mod_score_percent:.1f}%]** {last_mod_info}")
             
-            for sub_name, sub_mod in mod_data['sub_modules'].items():
-                sub_earned = sum(it['score'] for it in sub_mod['items'] if st.session_state.get(f"chk_{it['id']}", False))
-                sub_score_percent = (sub_earned / SYSTEM_TOTAL_FIXED * 100)
+            for sub_name, sub_mod in mod_data.get('sub_modules', {}).items():
+                sub_earned = sum(it.get('score', 0) for it in sub_mod.get('items', []) if st.session_state.get(f"chk_{it['id']}", False))
+                sub_score_percent = (sub_earned / SYSTEM_TOTAL_FIXED * 100) if SYSTEM_TOTAL_FIXED != 0 else 0
 
-                # 【计算上一次子项得分】
+                # 计算上一次子项得分
                 last_sub_info = ""
                 if last_ev:
-                    last_sub_earned = sum(it['score'] for it in sub_mod['items'] if last_ev['results'].get(it['id'], {}).get('is_checked', False))
-                    last_sub_percent = (last_sub_earned / SYSTEM_TOTAL_FIXED * 100)
+                    last_sub_earned = sum(it.get('score', 0) for it in sub_mod.get('items', []) if last_ev.get('results', {}).get(it['id'], {}).get('is_checked', False))
+                    last_sub_percent = (last_sub_earned / SYSTEM_TOTAL_FIXED * 100) if SYSTEM_TOTAL_FIXED != 0 else 0
                     last_sub_info = f" (上次: {last_sub_percent:.1f}%)"
 
                 sub_key = f"exp_{factory_id}_{mod_name}_{sub_name}"
@@ -1076,25 +1074,23 @@ def start_evaluation(current_user_id):
                     st.write(f"**子项得分: :green[{sub_score_percent:.1f}%]** {last_sub_info}")
                     st.write("") 
 
-                    for it in sub_mod['items']:
+                    for it in sub_mod.get('items', []):
                         it_id = it['id']
                         c1, c2, c3 = st.columns([0.65, 0.2, 0.15])
                         
-                        # 【计算上一次该项是否合格】
+                        # 计算上一次该项是否合格
                         last_item_status = ""
                         if last_ev:
-                            was_ok = last_ev['results'].get(it_id, {}).get('is_checked', False)
+                            was_ok = last_ev.get('results', {}).get(it_id, {}).get('is_checked', False)
                             last_item_status = " | :green[上次合格]" if was_ok else " | :red[上次不合格]"
 
-                       # ... 在循环内部 ...
                         with c1:
                             label = f":orange[{it['name']} (关键项)]" if it.get('is_key') else it['name']
                             full_label = f"{label}{last_item_status}"
                             
-                            # --- 【修改位置 2：回填复选框】 ---
-                            # 关键：从历史记录的 results 字典里按 ID 找之前的 is_checked
+                            # 回填复选框
                             history_results = st.session_state.get("editing_record", {}).get("results", {})
-                            history_item_checked = history_results.get(it_id, {}).get("is_checked", False)
+                            history_item_checked = history_results.get(it_id, {}).get('is_checked', False)
                             
                             # 使用 get_default_val 的逻辑决定初始状态
                             is_checked = st.checkbox(
@@ -1130,34 +1126,36 @@ def start_evaluation(current_user_id):
                                         st.rerun()
 
                         if not is_checked:
-                            if it['details']:
+                            if it.get('details'):
                                 st.session_state.eval_results[it_id]['details'] = st.multiselect(
                                     "缺陷选择", it['details'],
                                     default=st.session_state.eval_results[it_id]['details'],
                                     key=f"det_{it_id}", label_visibility="collapsed"
                                 )
-                            if it['comment']:
+                            if it.get('comment'):
                                 st.caption(f"💡 建议：{it['comment']}")
                         st.divider()
 
     # --- 5. 总结区 ---
     st.subheader("评估汇总")
-    overall_percent = (total_system_earned / SYSTEM_TOTAL_FIXED * 100)
+    overall_percent = (total_system_earned / SYSTEM_TOTAL_FIXED * 100) if SYSTEM_TOTAL_FIXED != 0 else 0
     
     if last_ev:
-        st.metric("总得分率", f"{overall_percent:.2f}%", delta=f"{overall_percent - last_ev['overall_percent']:.2f}%")
+        last_overall = last_ev.get('overall_percent', 0)
+        st.metric("总得分率", f"{overall_percent:.2f}%", delta=f"{overall_percent - last_overall:.2f}%")
     else:
         st.metric("总得分率", f"{overall_percent:.2f}%")
         
-    comments = st.text_area("综合评估意见", height=80)
+    comments = st.text_area("综合评估意见", height=80, key="comments_sel")
 
-    # --- 【修改位置 3：保存逻辑】 ---
+    # --- 保存逻辑（核心修复区） ---
     if st.button("保存并生成报告", type="primary"):
+        # 组装评估数据
         ev_data = {
             "factory_id": factory_id,
             "evaluator": evaluator,
-            "eval_date": eval_date.strftime("%Y-%m-%d"),
-            "evaluator_id": st.session_state.user_id,
+            "eval_date": eval_date.strftime("%Y-%m-%d"),  # 确保是字符串
+            "evaluator_id": current_user_id,  # 用传入的current_user_id，而非session_state
             "eval_type": eval_type,
             "selected_modules": selected_modules,
             "overall_percent": overall_percent,
@@ -1165,16 +1163,278 @@ def start_evaluation(current_user_id):
             "comments": comments
         }
         
-        # 调用覆盖逻辑函数
+        # 调用保存逻辑
         save_evaluation_logic(ev_data)
         
-        pdf_buf = generate_pdf(saved_record) 
-        st.download_button(
-            label="📥 下载评估报告 (PDF)",
-            data=pdf_buf,
-            file_name=f"工厂评估报告_{saved_record['id']}_{eval_date}.pdf",
-            mime="application/pdf"
-        )
+        # ========== 核心修复：用ev_data替代未定义的saved_record ==========
+        try:
+            # 生成PDF（使用组装好的ev_data）
+            pdf_buf = generate_pdf(ev_data) 
+            if pdf_buf:
+                # 修复文件名：用factory_id替代不存在的id，日期转字符串
+                file_name = f"工厂评估报告_{factory_id}_{eval_date.strftime('%Y-%m-%d')}.pdf"
+                st.download_button(
+                    label="📥 下载评估报告 (PDF)",
+                    data=pdf_buf,
+                    file_name=file_name,
+                    mime="application/pdf",
+                    key="pdf_download"
+                )
+            else:
+                st.warning("PDF生成失败，无法下载")
+        except Exception as e:
+            st.error(f"生成PDF失败：{str(e)}")
+        
+        # 重置评估结果状态（可选，避免下次评估带旧数据）
+        st.session_state.eval_results = {}
+# ==================== 核心评估页面（优化版：拍照/缩略图/大图） ====================
+# def start_evaluation(current_user_id):
+#     inject_custom_css()
+#     inject_print_css()  # <--- 【添加位置 1】
+#     st.subheader("欢迎回来，评估员")
+    
+#     # 【新增：编辑模式提醒】
+#     if st.session_state.get("is_edit_mode"):
+#         st.warning(f"🔄 正在编辑历史记录：{st.session_state.editing_record.get('eval_date')}")
+#         if st.button("取消编辑"):
+#             st.session_state.is_edit_mode = False
+#             st.session_state.editing_record = None
+#             st.rerun()
+
+#     # 定义系统固定总分分母
+#     SYSTEM_TOTAL_FIXED = 177
+
+#    # --- 1. 基础配置 ---
+#     col1, col2, col3, col4 = st.columns(4)
+#     with col1:
+#         # 回填工厂 ID
+#         default_fty = get_default_val("factory_id", db.factories[0]['id'])
+#         # 找到对应 ID 在列表中的索引
+#         fty_options = [(f['id'], f['name']) for f in db.factories]
+#         fty_index = next((i for i, f in enumerate(fty_options) if f[0] == default_fty), 0)
+#         factory_id = st.selectbox("评估工厂", fty_options, index=fty_index, format_func=lambda x: x[1])[0]
+#     with col2:
+#         # 回填日期
+#         default_date = get_default_val("eval_date", date.today())
+#         if isinstance(default_date, str): # 如果从 JSON 读取的是字符串则转换
+#              default_date = datetime.strptime(default_date, "%Y-%m-%d").date()
+#         eval_date = st.date_input("评估日期", default_date)
+#     with col3:
+#         evaluator = st.text_input("评估员", value=st.session_state.get('user', ''))
+#     with col4:
+#         eval_type = st.selectbox("审核性质", ["常规审核", "整改复查"])
+
+#     # 【新增功能：整改复查对比逻辑】
+#     last_ev = None
+#     if eval_type == "整改复查":
+#         past_evals = [e for e in db.evaluations if e['factory_id'] == factory_id]
+#         if past_evals:
+#             last_ev = sorted(past_evals, key=lambda x: x['eval_date'], reverse=True)[0]
+#         else:
+#             st.info("该工厂暂无历史评估记录，将以常规模式进行。")
+
+#     all_modules = list(db.modules.keys())
+#     selected_modules = all_modules if eval_type == "常规审核" else st.multiselect("选择复查模块", all_modules)
+    
+#     if not selected_modules:
+#         st.info("请选择上方模块开始评分")
+#         return
+
+#     # --- 2. 状态初始化 & 提取所有 ID ---
+#     if 'eval_results' not in st.session_state:
+#         st.session_state.eval_results = {}
+    
+#     # 修复点：定义 all_item_ids 用于全选功能
+#     all_item_ids = []
+#     for mod_name in selected_modules:
+#         for sub_mod in db.modules[mod_name]['sub_modules'].values():
+#             for it in sub_mod['items']:
+#                 it_id = it['id']
+#                 all_item_ids.append(it_id) # 收集所有 ID
+#                 if it_id not in st.session_state.eval_results:
+#                     st.session_state.eval_results[it_id] = {"is_checked": False, "details": [], "image_path": None}
+
+#    # --- 3. 核心评分循环（及右上角操作按钮） ---
+#     st.divider()
+
+#     # 使用容器布局，将按钮精准定位在分割线下方、列表右上角
+#     # col_space 占比 8.5，确保按钮被推到最右
+#     col_space, col_btns = st.columns([8.5, 1.5])
+    
+#     with col_btns:
+#         # 增加一小段负边距 CSS，让按钮稍微上移，贴近分割线
+#         st.markdown("""
+#             <style>
+#             .st-key-small_btns_container {
+#                 margin-top: -45px; 
+#             }
+#             div[data-testid="stColumn"] button {
+#                 padding: 1px 2px !important;
+#                 font-size: 11px !important;
+#                 height: 22px !important;
+#                 min-height: 22px !important;
+#                 line-height: 1 !important;
+#                 background-color: #f0f2f6;
+#             }
+#             </style>
+#         """, unsafe_allow_html=True)
+        
+#         # 使用容器包裹按钮以便精确定位
+#         with st.container():
+#             sub_c1, sub_c2 = st.columns(2)
+#             if sub_c1.button("全选", key="small_all"):
+#                 for it_id in all_item_ids:
+#                     st.session_state[f"chk_{it_id}"] = True
+#                     st.session_state.eval_results[it_id]["is_checked"] = True
+#                 st.rerun()
+#             if sub_c2.button("清空", key="small_none"):
+#                 for it_id in all_item_ids:
+#                     st.session_state[f"chk_{it_id}"] = False
+#                     st.session_state.eval_results[it_id]["is_checked"] = False
+#                 st.rerun()
+
+#     total_system_earned = 0
+#     # ... 后面接原来的 for mod_name in selected_modules: ...
+
+#     for mod_name in selected_modules:
+#         mod_data = db.modules[mod_name]
+        
+#         # 计算该模块实时总分
+#         mod_earned = 0
+#         for sub in mod_data['sub_modules'].values():
+#             mod_earned += sum(it['score'] for it in sub['items'] if st.session_state.get(f"chk_{it['id']}", False))
+        
+#         # 换算百分比 (基于177)
+#         mod_score_percent = (mod_earned / SYSTEM_TOTAL_FIXED * 100)
+#         total_system_earned += mod_earned
+
+#         # 【计算上一次模块得分】
+#         last_mod_info = ""
+#         if last_ev:
+#             last_mod_earned = 0
+#             for s_name, s_data in mod_data['sub_modules'].items():
+#                 last_mod_earned += sum(it['score'] for it in s_data['items'] if last_ev['results'].get(it['id'], {}).get('is_checked', False))
+#             last_mod_percent = (last_mod_earned / SYSTEM_TOTAL_FIXED * 100)
+#             last_mod_info = f" (上次: {last_mod_percent:.1f}%)"
+
+#         with st.expander(f"📦{mod_name}", expanded=True):
+#             st.write(f"**模块得分: :blue[{mod_score_percent:.1f}%]** {last_mod_info}")
+            
+#             for sub_name, sub_mod in mod_data['sub_modules'].items():
+#                 sub_earned = sum(it['score'] for it in sub_mod['items'] if st.session_state.get(f"chk_{it['id']}", False))
+#                 sub_score_percent = (sub_earned / SYSTEM_TOTAL_FIXED * 100)
+
+#                 # 【计算上一次子项得分】
+#                 last_sub_info = ""
+#                 if last_ev:
+#                     last_sub_earned = sum(it['score'] for it in sub_mod['items'] if last_ev['results'].get(it['id'], {}).get('is_checked', False))
+#                     last_sub_percent = (last_sub_earned / SYSTEM_TOTAL_FIXED * 100)
+#                     last_sub_info = f" (上次: {last_sub_percent:.1f}%)"
+
+#                 sub_key = f"exp_{factory_id}_{mod_name}_{sub_name}"
+#                 with st.expander(f"🔹 {sub_name}", expanded=True, key=sub_key):
+#                     st.write(f"**子项得分: :green[{sub_score_percent:.1f}%]** {last_sub_info}")
+#                     st.write("") 
+
+#                     for it in sub_mod['items']:
+#                         it_id = it['id']
+#                         c1, c2, c3 = st.columns([0.65, 0.2, 0.15])
+                        
+#                         # 【计算上一次该项是否合格】
+#                         last_item_status = ""
+#                         if last_ev:
+#                             was_ok = last_ev['results'].get(it_id, {}).get('is_checked', False)
+#                             last_item_status = " | :green[上次合格]" if was_ok else " | :red[上次不合格]"
+
+#                        # ... 在循环内部 ...
+#                         with c1:
+#                             label = f":orange[{it['name']} (关键项)]" if it.get('is_key') else it['name']
+#                             full_label = f"{label}{last_item_status}"
+                            
+#                             # --- 【修改位置 2：回填复选框】 ---
+#                             # 关键：从历史记录的 results 字典里按 ID 找之前的 is_checked
+#                             history_results = st.session_state.get("editing_record", {}).get("results", {})
+#                             history_item_checked = history_results.get(it_id, {}).get("is_checked", False)
+                            
+#                             # 使用 get_default_val 的逻辑决定初始状态
+#                             is_checked = st.checkbox(
+#                                 full_label, 
+#                                 key=f"chk_{it_id}", 
+#                                 value=history_item_checked if st.session_state.get("is_edit_mode") else st.session_state.get(f"chk_{it_id}", False)
+#                             )
+#                             st.session_state.eval_results[it_id]['is_checked'] = is_checked
+                            
+#                         with c2:
+#                             with st.popover("📸 拍照上传"):
+#                                 img_file = st.file_uploader("拍照", type=['jpg','png','jpeg'], key=f"up_{it_id}", label_visibility="collapsed")
+#                                 if img_file:
+#                                     file_ext = img_file.name.split('.')[-1]
+#                                     file_name = f"{it_id}_{datetime.now().strftime('%H%M%S')}.{file_ext}"
+#                                     save_path = os.path.join(MEDIA_DIR, file_name)
+#                                     with open(save_path, "wb") as f:
+#                                         f.write(img_file.getbuffer())
+#                                     st.session_state.eval_results[it_id]['image_path'] = save_path
+#                                     st.rerun()
+
+#                         with c3:
+#                             img_path = st.session_state.eval_results[it_id].get('image_path')
+#                             if img_path and os.path.exists(img_path):
+#                                 st.image(img_path, width=40)
+#                                 sc1, sc2 = st.columns(2)
+#                                 with sc1:
+#                                     if st.button("👁️", key=f"v_{it_id}"): show_full_image(img_path)
+#                                 with sc2:
+#                                     if st.button("🗑️", key=f"d_{it_id}"):
+#                                         if os.path.exists(img_path): os.remove(img_path)
+#                                         st.session_state.eval_results[it_id]['image_path'] = None
+#                                         st.rerun()
+
+#                         if not is_checked:
+#                             if it['details']:
+#                                 st.session_state.eval_results[it_id]['details'] = st.multiselect(
+#                                     "缺陷选择", it['details'],
+#                                     default=st.session_state.eval_results[it_id]['details'],
+#                                     key=f"det_{it_id}", label_visibility="collapsed"
+#                                 )
+#                             if it['comment']:
+#                                 st.caption(f"💡 建议：{it['comment']}")
+#                         st.divider()
+
+#     # --- 5. 总结区 ---
+#     st.subheader("评估汇总")
+#     overall_percent = (total_system_earned / SYSTEM_TOTAL_FIXED * 100)
+    
+#     if last_ev:
+#         st.metric("总得分率", f"{overall_percent:.2f}%", delta=f"{overall_percent - last_ev['overall_percent']:.2f}%")
+#     else:
+#         st.metric("总得分率", f"{overall_percent:.2f}%")
+        
+#     comments = st.text_area("综合评估意见", height=80)
+
+#     # --- 【修改位置 3：保存逻辑】 ---
+#     if st.button("保存并生成报告", type="primary"):
+#         ev_data = {
+#             "factory_id": factory_id,
+#             "evaluator": evaluator,
+#             "eval_date": eval_date.strftime("%Y-%m-%d"),
+#             "evaluator_id": st.session_state.user_id,
+#             "eval_type": eval_type,
+#             "selected_modules": selected_modules,
+#             "overall_percent": overall_percent,
+#             "results": st.session_state.eval_results,
+#             "comments": comments
+#         }
+        
+#         # 调用覆盖逻辑函数
+#         save_evaluation_logic(ev_data)
+        
+#         pdf_buf = generate_pdf(saved_record) 
+#         st.download_button(
+#             label="📥 下载评估报告 (PDF)",
+#             data=pdf_buf,
+#             file_name=f"工厂评估报告_{saved_record['id']}_{eval_date}.pdf",
+#             mime="application/pdf"
+#         )
 
 # ==================== 数据分析看板 ====================
 def show_data_analysis(evals_to_show):
