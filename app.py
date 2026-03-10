@@ -447,36 +447,56 @@ class DataStore:
             }
         }
     def _load_evaluations(self):
+        """加载所有评估记录（私有方法）"""
         f = os.path.join(DATA_DIR, "evaluations.json")
-        return json.load(open(f, 'r', encoding='utf-8')) if os.path.exists(f) else []
+        try:
+            return json.load(open(f, 'r', encoding='utf-8')) if os.path.exists(f) else []
+        except Exception as e:
+            st.error(f"加载评估记录失败：{e}")
+            return []
 
-    def save_evaluations(self, ev, index=None):
-    # """
-    # 如果提供了 index，则覆盖旧记录（编辑模式）；
-    # 否则追加新记录（新增模式）。
-    # """
+    def _save_evaluations(self):
+        """保存整个评估列表到文件（私有方法，无参数）"""
+        f = os.path.join(DATA_DIR, "evaluations.json")
+        try:
+            with open(f, 'w', encoding='utf-8') as file:
+                json.dump(self.evaluations, file, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            st.error(f"保存评估记录失败：{e}")
+            return False
+
+    def save_single_evaluation(self, ev, index=None):
+        """
+        保存单条评估记录（适配编辑/新增模式）
+        :param ev: 评估数据字典
+        :param index: 编辑模式时传入记录索引，新增模式传None
+        :return: 保存后的评估记录
+        """
         if index is not None and 0 <= index < len(self.evaluations):
-            # 编辑模式：保持原有的 ID 和创建时间
+            # 编辑模式：覆盖旧记录，保留原有ID和创建时间
             ev['id'] = self.evaluations[index]['id']
             ev['created_at'] = self.evaluations[index].get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             ev['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             self.evaluations[index] = ev
         else:
-            # 新增模式
+            # 新增模式：生成新ID和创建时间
             ev['id'] = len(self.evaluations) + 1
             ev['created_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             self.evaluations.append(ev)
         
+        # 调用私有方法保存整个列表
         self._save_evaluations()
         return ev
 
+    # ========== 关键：适配原有调用的无参方法 ==========
+    def save_evaluations(self):
+        """无参数的保存方法（仅保存当前的evaluations列表）"""
+        return self._save_evaluations()
+
+    # 保留原有add_evaluation方法（兼容旧逻辑）
     def add_evaluation(self, ev):
-        ev['id'] = len(self.evaluations) + 1
-        ev['created_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.evaluations.append(ev)
-        self._save_evaluations()
-        return ev
-
+        return self.save_single_evaluation(ev, index=None)
 # ==================== 初始化 ====================
 db = DataStore()
 
@@ -665,49 +685,81 @@ def inject_print_css():
         }
         </style>
     """, unsafe_allow_html=True)
-
-def save_evaluation_logic(new_record):
-    """
-    核心保存逻辑：区分『新增』与『覆盖』
-    :param new_record: 新的/编辑后的评估记录
-    """
+    
+def save_evaluation_logic(ev_data):
+    """保存评估逻辑（最终修复版）"""
     try:
-        # 获取当前所有评估记录
-        all_evals = db.evaluations 
-        
         if st.session_state.get("is_edit_mode"):
-            # --- 覆盖模式 ---
+            # 编辑模式：调用save_single_evaluation并传入索引
             edit_idx = st.session_state.get("editing_index")
-            
-            # 安全检查：确保索引有效
-            if edit_idx is not None and 0 <= edit_idx < len(all_evals):
-                # 1. 替换旧记录
-                all_evals[edit_idx] = new_record
-                
-                # 2. 持久化到 JSON 或 服务器
-                db.save_evaluations() 
-                
+            if edit_idx is not None and 0 <= edit_idx < len(db.evaluations):
+                db.save_single_evaluation(ev_data, edit_idx)
                 st.success(f"✅ 报告已成功更新！(记录索引: {edit_idx})")
                 
-                # 3. 退出编辑模式并重置状态
+                # 重置编辑状态
                 st.session_state.is_edit_mode = False
                 st.session_state.editing_record = None
                 st.session_state.editing_index = None
                 
-                # 4. 延迟刷新，让用户看清成功提示
+                import time
                 time.sleep(1)
                 st.rerun()
             else:
                 st.error("❌ 编辑失败：找不到原始记录索引。")
         else:
-            # --- 正常新增模式 ---
-            all_evals.append(new_record)
-            db.save_evaluations()
+            # 新增模式：调用save_single_evaluation（index传None）
+            db.save_single_evaluation(ev_data)
             st.success("✅ 新评估报告已保存！")
-            st.rerun()
+        
+        # 可选：如果需要单独触发保存（兜底）
+        # db.save_evaluations()
+        
     except Exception as e:
         st.error(f"保存评估记录失败：{str(e)}")
         print(f"保存逻辑错误详情：{e}")
+        
+# def save_evaluation_logic(new_record):
+#     """
+#     核心保存逻辑：区分『新增』与『覆盖』
+#     :param new_record: 新的/编辑后的评估记录
+#     """
+#     try:
+#         # 获取当前所有评估记录
+#         all_evals = db.evaluations 
+        
+#         if st.session_state.get("is_edit_mode"):
+#             # --- 覆盖模式 ---
+#             edit_idx = st.session_state.get("editing_index")
+            
+#             # 安全检查：确保索引有效
+#             if edit_idx is not None and 0 <= edit_idx < len(all_evals):
+#                 # 1. 替换旧记录
+#                 all_evals[edit_idx] = new_record
+                
+#                 # 2. 持久化到 JSON 或 服务器
+#                 db.save_evaluations() 
+                
+#                 st.success(f"✅ 报告已成功更新！(记录索引: {edit_idx})")
+                
+#                 # 3. 退出编辑模式并重置状态
+#                 st.session_state.is_edit_mode = False
+#                 st.session_state.editing_record = None
+#                 st.session_state.editing_index = None
+                
+#                 # 4. 延迟刷新，让用户看清成功提示
+#                 time.sleep(1)
+#                 st.rerun()
+#             else:
+#                 st.error("❌ 编辑失败：找不到原始记录索引。")
+#         else:
+#             # --- 正常新增模式 ---
+#             all_evals.append(new_record)
+#             db.save_evaluations()
+#             st.success("✅ 新评估报告已保存！")
+#             st.rerun()
+#     except Exception as e:
+#         st.error(f"保存评估记录失败：{str(e)}")
+#         print(f"保存逻辑错误详情：{e}")
         
 # def generate_pdf(evaluation):
 #     buffer = BytesIO()
